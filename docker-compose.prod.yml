@@ -1,0 +1,48 @@
+name: laravel-production
+
+services:
+  prod-app:
+    image: ${APP_IMAGE:-formation-app:prod}
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: https://formation.memc.gov.bf
+      APP_KEY: ${APP_KEY:?Set APP_KEY in the environment or .env}
+      DB_CONNECTION: pgsql
+      DB_HOST: prod-postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-laravel_mood_tracker}
+      DB_USERNAME: ${DB_USERNAME:-laravel}
+      DB_PASSWORD: ${DB_PASSWORD:-laravel_password}
+    depends_on:
+      prod-postgres:
+        condition: service_healthy
+    networks:
+      - production-network
+    ports:
+      - "${APP_HTTP_PORT:-80}:80"
+    restart: unless-stopped
+
+  prod-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-laravel_mood_tracker}
+      POSTGRES_USER: ${DB_USERNAME:-laravel}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-laravel_password}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    networks:
+      - production-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  postgres_prod_data:
+
+networks:
+  production-network:
+    driver: bridge
