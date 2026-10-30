@@ -17,7 +17,7 @@
       </div>
     </div>
     <div class="legend col-span-2 pl-0 md:pl-20">
-      <span class="font-bold">Legend</span>
+      <span class="font-bold">Legends</span>
       <ul>
       @foreach($moods as $mood)
         <li>
@@ -25,7 +25,7 @@
           {{ $mood->name }}
         </li>
       @endforeach
-      </ul> 
+      </ul>
     </div>
   </div>
 </body>
