@@ -1,0 +1,153 @@
+
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  # 1. DETECTION DES SECRETS
+  secrets-scan:
+    name: Gitleaks - Secrets
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 2. SAST - ANALYSE DU CODE
+  sast:
+    name: Semgrep - SAST
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Analyze source code
+        run: semgrep scan --config auto --error .
+
+  # 3. SCA - DEPENDANCES
+  sca:
+    name: Trivy - SCA
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan dependencies
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            aquasec/trivy:latest \
+            fs --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 .
+
+  # 4. CONTROLE DE CONFIGURATION
+  configuration:
+    name: Trivy - Configuration
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan Docker and IaC configurations
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            aquasec/trivy:latest \
+            config \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 .
+
+  # 5. CONSTRUCTION DE L'IMAGE
+  build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [secrets-scan, sast, sca, configuration]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t myapp:${{ github.sha }} .
+
+      - name: Save Docker image
+        run: |
+          docker save myapp:${{ github.sha }} \
+            -o myapp.tar
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: docker-image
+          path: myapp.tar
+          retention-days: 1
+
+  # 6. ANALYSE DE L'IMAGE DOCKER
+  container-scan:
+    name: Trivy - Container Security
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: docker-image
+
+      - name: Load Docker image
+        run: docker load -i myapp.tar
+
+      - name: Scan Docker image
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest \
+            image \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            myapp:${{ github.sha }}
+
+  # 7. DAST - APPLICATION EN FONCTIONNEMENT
+  dast:
+    name: OWASP ZAP - DAST
+    runs-on: ubuntu-latest
+    needs: container-scan
+    if: github.event_name == 'push'
+
+    steps:
+      - name: OWASP ZAP Baseline Scan
+        run: |
+          docker run --rm \
+            -v "$PWD:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t "${{ secrets.DAST_TARGET_URL }}" \
+            -r zap-report.html
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: zap-report
+          path: zap-report.html
+          if-no-files-found: ignore
